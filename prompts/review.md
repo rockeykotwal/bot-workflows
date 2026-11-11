@@ -182,7 +182,7 @@ Return ONLY valid JSON. No markdown fences around it, no explanation outside the
       "title": "Short title, max 8 words",
       "problem": "What is wrong in one or two sentences.",
       "why": "The consequence if not fixed, or which project rule this breaks.",
-      "suggestion": "The corrected lines of code only — no surrounding unchanged context. Format to match the project's line width (see Formatter constraints section if present, otherwise default to 80 chars). Break long lines into multiple lines rather than writing one long line."
+      "suggestion": "The corrected lines of code only — no surrounding unchanged context. Always respect the line width from the Formatter constraints section above. If a line would exceed the limit, break it at a logical boundary (after a comma, after an opening brace/paren, before a closing brace/paren, or before an operator). Never break mid-token or mid-expression."
     }
   ]
 }
