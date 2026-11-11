@@ -27,12 +27,6 @@ permissions:
   contents: read
   pull-requests: write
 
-# Cancel any in-progress run for the same PR when a new commit is pushed.
-# This prevents 3 queued reviews if the developer pushes 3 commits quickly.
-concurrency:
-  group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   review:
     runs-on: ubuntu-latest
