@@ -90,7 +90,7 @@ async function gemini(prompt) {
     try {
       const model = genAI.getGenerativeModel(
         { model: modelName },
-        { timeout: 30000 }
+        { timeout: 50000 }
       )
       console.error(`Gemini: using ${modelName}`)
       return await withRetry(
