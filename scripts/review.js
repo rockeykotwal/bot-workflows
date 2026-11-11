@@ -85,11 +85,15 @@ async function reviewDiff(diff) {
 
   const genAI = new GoogleGenerativeAI(API_KEY)
 
-  // gemini-3.8-flash is the current free tier model
-  const model = genAI.getGenerativeModel(
-    { model: 'gemini-3.8-flash' },
-    { timeout: 120000 }  // 120s — GitHub Actions runners have higher latency to Gemini
-  )
+  // Model list — primary first, fallback if primary is unavailable or overloaded
+  const MODELS = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash-002']
+
+  function getModel(name) {
+    return genAI.getGenerativeModel(
+      { model: name },
+      { timeout: 120000 }  // 120s — GitHub Actions runners have higher latency to Gemini
+    )
+  }
 
   // Detect stack from the diff so the prompt can focus on the right checks
   const stack = detectStack(diff)
@@ -107,29 +111,45 @@ ${diff}
 
 Return ONLY the JSON object. No markdown fences around it, no extra text.`
 
-  // Retry up to 3 times with backoff — GitHub Actions runners sometimes get transient fetch failures
-  async function callWithRetry(fn, retries = 3, delayMs = 3000) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        return await fn()
-      } catch (err) {
-        const isRetryable = err.message?.includes('fetch failed') ||
-          err.message?.includes('ECONNRESET') ||
-          err.message?.includes('ETIMEDOUT') ||
-          err.message?.includes('aborted') ||
-          err.message?.includes('network')
-        if (isRetryable && attempt < retries) {
-          console.error(`Attempt ${attempt} failed (${err.message}). Retrying in ${delayMs / 1000}s...`)
-          await new Promise(r => setTimeout(r, delayMs * attempt))
-          continue
+  // Try each model in order. On transient errors (timeout, 503, network) retry with backoff.
+  // On hard errors (404 not found, 400 bad request) move to the next model immediately.
+  async function callWithFallback(prompt) {
+    for (let m = 0; m < MODELS.length; m++) {
+      const modelName = MODELS[m]
+      const model = getModel(modelName)
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          console.error(`Using model: ${modelName} (attempt ${attempt})`)
+          return await model.generateContent(prompt)
+        } catch (err) {
+          const msg = err.message ?? ''
+          const isTransient = msg.includes('fetch failed') || msg.includes('ECONNRESET') ||
+            msg.includes('ETIMEDOUT') || msg.includes('aborted') ||
+            msg.includes('503') || msg.includes('high demand') || msg.includes('overloaded')
+          const isHard = msg.includes('404') || msg.includes('400') || msg.includes('deprecated')
+
+          if (isHard) {
+            console.error(`Model ${modelName} unavailable (${msg.slice(0, 80)}). Trying next model...`)
+            break // move to next model
+          }
+          if (isTransient && attempt < 2) {
+            console.error(`Transient error on ${modelName} (${msg.slice(0, 80)}). Retrying in 15s...`)
+            await new Promise(r => setTimeout(r, 15000))
+            continue
+          }
+          if (m < MODELS.length - 1) {
+            console.error(`${modelName} failed (${msg.slice(0, 80)}). Trying next model...`)
+            break // move to next model
+          }
+          throw err // all models exhausted
         }
-        throw err
       }
     }
+    throw new Error('All Gemini models failed')
   }
 
   try {
-    const result = await callWithRetry(() => model.generateContent(fullPrompt))
+    const result = await callWithFallback(fullPrompt)
     const text = result.response.text().trim()
 
     // Gemini sometimes wraps the JSON in markdown fences — strip them
