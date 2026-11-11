@@ -34,26 +34,33 @@ const PROVIDER = process.env.LLM_PROVIDER?.toLowerCase() ?? 'gemini'
 // --- Retry helper ---
 // Waits delayMs, doubles on each attempt. Retries on network/transient errors only.
 
-async function withRetry(fn, { retries = 2, delayMs = 10000, label = '' } = {}) {
+async function withRetry(fn, { retries = 2, delayMs = 5000, label = '' } = {}) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await fn()
     } catch (err) {
       const msg = err.message ?? ''
-      const isTransient =
+      // Network-level failures (timeout, connection refused) won't be fixed by retrying
+      // the same host — fail fast and let the caller try the next model/provider.
+      const isNetworkDown =
         msg.includes('fetch failed') ||
         msg.includes('ECONNRESET') ||
         msg.includes('ETIMEDOUT') ||
-        msg.includes('aborted') ||
+        msg.includes('aborted')
+
+      // Server-side overload errors are worth retrying after a short wait
+      const isOverloaded =
         msg.includes('503') ||
         msg.includes('high demand') ||
         msg.includes('overloaded') ||
         msg.includes('rate_limit') ||
         msg.includes('529')           // Anthropic overloaded
 
-      if (isTransient && attempt < retries) {
+      if (isNetworkDown) throw err   // fail immediately — no point retrying
+
+      if (isOverloaded && attempt < retries) {
         const wait = delayMs * attempt
-        console.error(`${label} attempt ${attempt} failed (${msg.slice(0, 80)}). Retrying in ${wait / 1000}s...`)
+        console.error(`${label} attempt ${attempt} overloaded (${msg.slice(0, 80)}). Retrying in ${wait / 1000}s...`)
         await new Promise(r => setTimeout(r, wait))
         continue
       }
@@ -83,12 +90,12 @@ async function gemini(prompt) {
     try {
       const model = genAI.getGenerativeModel(
         { model: modelName },
-        { timeout: 120000 }
+        { timeout: 30000 }
       )
       console.error(`Gemini: using ${modelName}`)
       return await withRetry(
         () => model.generateContent(prompt).then(r => r.response.text()),
-        { retries: 2, delayMs: 10000, label: `Gemini ${modelName}` }
+        { retries: 2, delayMs: 5000, label: `Gemini ${modelName}` }
       )
     } catch (err) {
       const msg = err.message ?? ''
