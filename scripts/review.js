@@ -88,7 +88,7 @@ async function reviewDiff(diff) {
   // gemini-3.8-flash is the current free tier model
   const model = genAI.getGenerativeModel(
     { model: 'gemini-3.8-flash' },
-    { timeout: 90000 }  // 90s timeout — Gemini can be slow on large diffs
+    { timeout: 120000 }  // 120s — GitHub Actions runners have higher latency to Gemini
   )
 
   // Detect stack from the diff so the prompt can focus on the right checks
@@ -116,6 +116,7 @@ Return ONLY the JSON object. No markdown fences around it, no extra text.`
         const isRetryable = err.message?.includes('fetch failed') ||
           err.message?.includes('ECONNRESET') ||
           err.message?.includes('ETIMEDOUT') ||
+          err.message?.includes('aborted') ||
           err.message?.includes('network')
         if (isRetryable && attempt < retries) {
           console.error(`Attempt ${attempt} failed (${err.message}). Retrying in ${delayMs / 1000}s...`)
