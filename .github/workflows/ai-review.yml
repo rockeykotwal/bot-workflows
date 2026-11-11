@@ -1,0 +1,105 @@
+name: AI Review Bot
+
+# This is a reusable workflow. Call it from any repo with:
+#
+#   jobs:
+#     review:
+#       uses: rockeykotwal/bot-workflows/.github/workflows/ai-review.yml@main
+#       secrets:
+#         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+#
+# Optional inputs:
+#   block_on_severity: 'none' | 'medium' | 'high'  (default: none — informational only)
+
+on:
+  workflow_call:
+    inputs:
+      block_on_severity:
+        description: 'Fail the check if findings at or above this severity exist. Use "none" to never block.'
+        type: string
+        default: 'none'
+    secrets:
+      GEMINI_API_KEY:
+        required: true
+
+# Minimal permissions — read the code, write PR comments. Nothing else.
+permissions:
+  contents: read
+  pull-requests: write
+
+# Cancel any in-progress run for the same PR when a new commit is pushed.
+# This prevents 3 queued reviews if the developer pushes 3 commits quickly.
+concurrency:
+  group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    # Skip draft PRs and PRs labelled skip-ai-review
+    if: |
+      github.event.pull_request.draft == false &&
+      !contains(join(github.event.pull_request.labels.*.name, ','), 'skip-ai-review')
+
+    steps:
+      # 1. Checkout the PR branch (the repo being reviewed)
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed to compute the diff against base
+
+      # 2. Checkout bot-workflows into a hidden subfolder so we can run its scripts
+      - name: Checkout bot-workflows
+        uses: actions/checkout@v4
+        with:
+          repository: rockeykotwal/bot-workflows
+          ref: main
+          path: .bot-workflows
+
+      # 3. Set up Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: .bot-workflows/package-lock.json
+
+      # 4. Install bot-workflows dependencies (Gemini SDK, Octokit)
+      - name: Install dependencies
+        run: npm ci
+        working-directory: .bot-workflows
+
+      # 5. Compute the PR diff
+      #    We diff the PR branch against its base so we only review what changed in this PR.
+      - name: Compute diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+          echo "Diff size: $(wc -l < /tmp/pr.diff) lines"
+
+      # 6. Run the review script
+      #    Passes the diff to Gemini, writes findings JSON to /tmp/review.json
+      - name: Run AI review
+        run: node .bot-workflows/scripts/review.js < /tmp/pr.diff > /tmp/review.json
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BLOCK_ON_SEVERITY: ${{ inputs.block_on_severity }}
+
+      # 7. Post findings to the PR
+      - name: Post comments to PR
+        run: node .bot-workflows/scripts/post-comments.js /tmp/review.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      # 8. Block the PR check if block_on_severity is set and findings exceed threshold
+      #    This step re-runs review.js with the env var set so it exits 1 when needed.
+      #    If block_on_severity is "none" (default), this step always passes.
+      - name: Enforce severity gate
+        if: inputs.block_on_severity != 'none'
+        run: node .bot-workflows/scripts/review.js < /tmp/pr.diff
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BLOCK_ON_SEVERITY: ${{ inputs.block_on_severity }}

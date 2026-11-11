@@ -20,6 +20,7 @@
   "homepage": "https://github.com/rockeykotwal/bot-workflows#readme",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@octokit/rest": "^22.0.1",
     "dotenv": "^18.0.10"
   }
 }
