@@ -75,6 +75,20 @@ async function reviewDiff(diff) {
     return
   }
 
+  // Count actual changed lines (+ and -) to gauge diff complexity.
+  // Context lines, headers, and hunk markers are excluded.
+  const MAX_CHANGED_LINES = parseInt(process.env.MAX_DIFF_LINES ?? '400', 10)
+  const changedLineCount = diff.split('\n').filter(l => (l.startsWith('+') || l.startsWith('-')) && !l.startsWith('+++') && !l.startsWith('---')).length
+
+  if (changedLineCount > MAX_CHANGED_LINES) {
+    console.log(JSON.stringify({
+      summary: `Diff too large to review automatically (${changedLineCount} changed lines, limit is ${MAX_CHANGED_LINES}). Consider splitting this PR into smaller focused changes — reviews are more useful and faster to merge when each PR does one thing.`,
+      risk: 'unknown',
+      findings: [],
+    }))
+    return
+  }
+
   // Detect stack from the diff so the prompt can focus on the right checks
   const stack = detectStack(diff)
   const stackNote = stack.length > 0

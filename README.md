@@ -157,6 +157,24 @@ The more specific you are, the more relevant the review comments will be.
 
 Add the label `skip-ai-review` to any PR and the bot won't run. Draft PRs are skipped automatically.
 
+## Diff size limit
+
+The bot skips PRs with more than **400 changed lines** (additions + deletions, excluding lock files and generated files). Instead of a low-quality review, it posts a comment asking you to split the PR.
+
+This limit exists because LLM review quality drops significantly on large diffs — the model starts pattern-matching rather than actually thinking about the code.
+
+Override the limit if needed:
+
+```yaml
+jobs:
+  review:
+    uses: rockeykotwal/bot-workflows/.github/workflows/ai-review.yml@main
+    with:
+      max_diff_lines: 600   # raise if your team regularly ships larger PRs
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+```
+
 ---
 
 ## Fork and customise

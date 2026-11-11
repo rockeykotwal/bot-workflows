@@ -28,6 +28,10 @@ on:
         description: 'Ollama server URL (only needed when llm_provider=ollama)'
         type: string
         default: 'http://localhost:11434'
+      max_diff_lines:
+        description: 'Skip review if changed lines exceed this limit. Keeps reviews focused and fast.'
+        type: number
+        default: 400
     secrets:
       GEMINI_API_KEY:
         required: false
@@ -95,6 +99,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OLLAMA_HOST: ${{ inputs.ollama_host }}
+          MAX_DIFF_LINES: ${{ inputs.max_diff_lines }}
           BLOCK_ON_SEVERITY: ${{ inputs.block_on_severity }}
 
       # 7. Post findings to the PR
