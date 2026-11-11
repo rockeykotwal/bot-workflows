@@ -103,7 +103,10 @@ async function reviewDiff(diff) {
   const indentStyle = formatterConfig?.indentStyle ?? 'space'
   const configSource = formatterConfig ? 'detected from project config' : 'default fallback — no formatter config found'
 
-  const formatterNote = `\n\n## Formatter constraints (${configSource})\n\nLine width: ${lineWidth} chars. Indent: ${indentWidth} ${indentStyle}s.\n\nAll code in the \`suggestion\` field MUST respect these rules:\n1. No line may exceed ${lineWidth} characters.\n2. When a line would be too long, break it at a LOGICAL boundary — after a comma, after an opening brace or paren, before a closing brace or paren, or before an operator (\`??\`, \`&&\`, \`||\`, \`+\`). Never break mid-token, mid-string, or mid-argument-name.\n3. Each item in a broken list (function arguments, object properties, array elements) goes on its own line, indented by ${indentWidth} ${indentStyle}s relative to the opening bracket.\n4. The closing bracket/paren goes on its own line, aligned with the line that opened it.`
+  const softLimit = 80
+  const hardLimit = lineWidth  // from config, or 100 when falling back
+
+  const formatterNote = `\n\n## Formatter constraints (${configSource})\n\nLine width: soft limit ${softLimit}, hard limit ${hardLimit} chars. Indent: ${indentWidth} ${indentStyle}s.\n\nLine-breaking rules for the \`suggestion\` field:\n1. Lines under ${softLimit} chars — no break needed, leave as-is.\n2. Lines between ${softLimit}–${hardLimit} chars — scan forward from character ${softLimit} and break at the first LOGICAL boundary you find before ${hardLimit}: after a comma, after an opening brace/paren, before a closing brace/paren, or before an operator (\`??\`, \`&&\`, \`||\`, \`?\`, \`+\`).\n3. Lines over ${hardLimit} chars — must break; use the last logical boundary before ${hardLimit}.\n4. Never break mid-token, mid-string, mid-identifier, or mid-argument-name.\n5. After a break, indent the continuation by ${indentWidth} ${indentStyle}s relative to the opening bracket. Put each item on its own line. Closing bracket/paren aligns with the line that opened it.`
 
   const fullPrompt = `${prompt}${projectContext}${stackNote}${formatterNote}
 

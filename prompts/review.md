@@ -182,7 +182,7 @@ Return ONLY valid JSON. No markdown fences around it, no explanation outside the
       "title": "Short title, max 8 words",
       "problem": "What is wrong in one or two sentences.",
       "why": "The consequence if not fixed, or which project rule this breaks.",
-      "suggestion": "The corrected lines of code only — no surrounding unchanged context. Always respect the line width from the Formatter constraints section above. If a line would exceed the limit, break it at a logical boundary (after a comma, after an opening brace/paren, before a closing brace/paren, or before an operator). Never break mid-token or mid-expression."
+      "suggestion": "The corrected lines of code only — no surrounding unchanged context. Follow the line-breaking rules in the Formatter constraints section above: lines under the soft limit stay as-is; lines between soft and hard limit break at the first logical boundary in that range; lines over the hard limit must break at the last logical boundary before the hard limit. Never break mid-token or mid-expression."
     }
   ]
 }
