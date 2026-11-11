@@ -38,9 +38,7 @@ jobs:
     runs-on: ubuntu-latest
 
     # Skip draft PRs and PRs labelled skip-ai-review
-    if: |
-      github.event.pull_request.draft == false &&
-      !contains(join(github.event.pull_request.labels.*.name, ','), 'skip-ai-review')
+    if: "!github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'skip-ai-review')"
 
     steps:
       # 1. Checkout the PR branch (the repo being reviewed)
@@ -95,11 +93,9 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
       # 8. Block the PR check if block_on_severity is set and findings exceed threshold
-      #    This step re-runs review.js with the env var set so it exits 1 when needed.
-      #    If block_on_severity is "none" (default), this step always passes.
+      #    Reads the already-generated JSON — no second Gemini call needed.
       - name: Enforce severity gate
         if: inputs.block_on_severity != 'none'
-        run: node .bot-workflows/scripts/review.js < /tmp/pr.diff
+        run: node .bot-workflows/scripts/check-severity.js /tmp/review.json
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BLOCK_ON_SEVERITY: ${{ inputs.block_on_severity }}
