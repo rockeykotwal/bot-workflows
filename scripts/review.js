@@ -1,7 +1,7 @@
 /**
  * review.js
  *
- * Reads a git diff from stdin (or a file), sends it to Gemini Flash,
+ * Reads a git diff from stdin (or a file), sends it to the configured LLM,
  * and prints structured findings as JSON to stdout.
  *
  * Usage:
@@ -14,12 +14,12 @@
  *   1 — bad configuration (missing API key)
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { config } from 'dotenv'
 import { getProjectContext, detectStack } from './get-context.js'
+import { generate, PROVIDER } from './llm.js'
 
 // __dirname equivalent in ES modules
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -28,26 +28,18 @@ const ROOT = join(__dirname, '..')
 // Always load .env from the bot-workflows root, regardless of where the script is called from
 config({ path: join(ROOT, '.env') })
 
-// --- 1. Validate config ---
-
-const API_KEY = process.env.GEMINI_API_KEY
-if (!API_KEY) {
-  console.error('ERROR: GEMINI_API_KEY is not set. Add it to .env or as a GitHub secret.')
-  process.exit(1)
-}
-
-// --- 2. Load the prompt ---
+// --- 1. Load the prompt ---
 
 // The prompt lives in prompts/review.md so it is versioned separately from code.
 // This makes it easy to tune review quality without touching the script.
 const prompt = readFileSync(join(ROOT, 'prompts', 'review.md'), 'utf8')
 
-// --- 3. Load project context from the repo being reviewed ---
+// --- 2. Load project context from the repo being reviewed ---
 
 // getProjectContext() reads PROJECT_CONTEXT.md and CLAUDE.md from cwd (the repo under review)
 const projectContext = getProjectContext(process.cwd())
 
-// --- 4. Read the diff from stdin ---
+// --- 3. Read the diff from stdin ---
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -60,7 +52,7 @@ function readStdin() {
   })
 }
 
-// --- 5. Call Gemini ---
+// --- 4. Call LLM ---
 
 async function reviewDiff(diff) {
   if (!diff || diff.trim().length === 0) {
@@ -83,19 +75,6 @@ async function reviewDiff(diff) {
     return
   }
 
-  const genAI = new GoogleGenerativeAI(API_KEY)
-
-  // Model list — primary first, fallback if primary is overloaded.
-  // gemini-flash-latest always points to the current stable Flash — good permanent alias.
-  const MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-flash-latest']
-
-  function getModel(name) {
-    return genAI.getGenerativeModel(
-      { model: name },
-      { timeout: 120000 }  // 120s — GitHub Actions runners have higher latency to Gemini
-    )
-  }
-
   // Detect stack from the diff so the prompt can focus on the right checks
   const stack = detectStack(diff)
   const stackNote = stack.length > 0
@@ -112,90 +91,41 @@ ${diff}
 
 Return ONLY the JSON object. No markdown fences around it, no extra text.`
 
-  // Try each model in order. On transient errors (timeout, 503, network) retry with backoff.
-  // On hard errors (404 not found, 400 bad request) move to the next model immediately.
-  async function callWithFallback(prompt) {
-    for (let m = 0; m < MODELS.length; m++) {
-      const modelName = MODELS[m]
-      const model = getModel(modelName)
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          console.error(`Using model: ${modelName} (attempt ${attempt})`)
-          return await model.generateContent(prompt)
-        } catch (err) {
-          const msg = err.message ?? ''
-          const isTransient = msg.includes('fetch failed') || msg.includes('ECONNRESET') ||
-            msg.includes('ETIMEDOUT') || msg.includes('aborted') ||
-            msg.includes('503') || msg.includes('high demand') || msg.includes('overloaded')
-          const isHard = msg.includes('404') || msg.includes('400') || msg.includes('deprecated')
-
-          if (isHard) {
-            console.error(`Model ${modelName} unavailable (${msg.slice(0, 80)}). Trying next model...`)
-            break // move to next model
-          }
-          if (isTransient && attempt < 2) {
-            console.error(`Transient error on ${modelName} (${msg.slice(0, 80)}). Retrying in 15s...`)
-            await new Promise(r => setTimeout(r, 15000))
-            continue
-          }
-          if (m < MODELS.length - 1) {
-            console.error(`${modelName} failed (${msg.slice(0, 80)}). Trying next model...`)
-            break // move to next model
-          }
-          throw err // all models exhausted
-        }
-      }
-    }
-    throw new Error('All Gemini models failed')
-  }
-
   try {
-    const result = await callWithFallback(fullPrompt)
-    const text = result.response.text().trim()
+    const text = (await generate(fullPrompt)).trim()
 
-    // Gemini sometimes wraps the JSON in markdown fences — strip them
+    // LLMs sometimes wrap the JSON in markdown fences — strip them
     const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()
 
     // Validate it's parseable JSON before printing
     const parsed = JSON.parse(cleaned)
     console.log(JSON.stringify(parsed, null, 2))
 
-    // block_on_severity: if set, exit 1 when findings at or above that severity exist
-    // This is what makes the check "required" in GitHub branch protection
-    const blockOn = process.env.BLOCK_ON_SEVERITY // 'high' | 'medium' | 'none'
-    if (blockOn && blockOn !== 'none') {
-      const severityRank = { high: 2, medium: 1, low: 0 }
-      const threshold = severityRank[blockOn] ?? 2
-      const blocking = parsed.findings?.filter(f => (severityRank[f.severity] ?? 0) >= threshold)
-      if (blocking?.length > 0) {
-        console.error(`\nBlocking: ${blocking.length} finding(s) at or above '${blockOn}' severity.`)
-        process.exit(1)
-      }
-    }
-
   } catch (err) {
-    if (err.message?.includes('429') || err.message?.toLowerCase().includes('rate limit')) {
-      // Rate limit hit — log to stderr (GitHub Actions will show this in the log)
-      // but exit 0 so the PR is never blocked
-      console.error('Gemini rate limit reached — skipping review this run.')
+    const msg = err.message ?? ''
+
+    if (msg.includes('429') || msg.toLowerCase().includes('rate limit') || msg.includes('rate_limit')) {
+      console.error(`${PROVIDER} rate limit reached — skipping review this run.`)
       process.exit(0)
     }
 
     if (err instanceof SyntaxError) {
-      // Gemini returned something that wasn't valid JSON — not fatal
-      console.error('Gemini returned non-JSON response — skipping.')
-      console.error('Raw response was:', err.message)
+      console.error(`${PROVIDER} returned non-JSON response — skipping.`)
+      console.error('Raw response was:', msg)
       process.exit(0)
     }
 
-    // Network error (fetch failed, timeout) — log and exit cleanly
-    if (err.message?.includes('fetch failed') || err.message?.includes('ETIMEDOUT')) {
-      console.error('Gemini network error after retries — skipping review.')
+    if (msg.includes('fetch failed') || msg.includes('ETIMEDOUT')) {
+      console.error(`${PROVIDER} network error after retries — skipping review.`)
       process.exit(0)
     }
 
-    // Any other API error — log and exit cleanly
-    console.error('Gemini API error:', err.message)
+    if (msg.includes('API_KEY') || msg.includes('is not set')) {
+      console.error(`Configuration error: ${msg}`)
+      process.exit(1)
+    }
+
+    console.error(`${PROVIDER} API error:`, msg)
     process.exit(0)
   }
 }
