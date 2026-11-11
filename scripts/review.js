@@ -86,7 +86,10 @@ async function reviewDiff(diff) {
   const genAI = new GoogleGenerativeAI(API_KEY)
 
   // gemini-3.8-flash is the current free tier model
-  const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' })
+  const model = genAI.getGenerativeModel(
+    { model: 'gemini-3.8-flash' },
+    { timeout: 90000 }  // 90s timeout — Gemini can be slow on large diffs
+  )
 
   // Detect stack from the diff so the prompt can focus on the right checks
   const stack = detectStack(diff)
@@ -104,8 +107,28 @@ ${diff}
 
 Return ONLY the JSON object. No markdown fences around it, no extra text.`
 
+  // Retry up to 3 times with backoff — GitHub Actions runners sometimes get transient fetch failures
+  async function callWithRetry(fn, retries = 3, delayMs = 3000) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        return await fn()
+      } catch (err) {
+        const isRetryable = err.message?.includes('fetch failed') ||
+          err.message?.includes('ECONNRESET') ||
+          err.message?.includes('ETIMEDOUT') ||
+          err.message?.includes('network')
+        if (isRetryable && attempt < retries) {
+          console.error(`Attempt ${attempt} failed (${err.message}). Retrying in ${delayMs / 1000}s...`)
+          await new Promise(r => setTimeout(r, delayMs * attempt))
+          continue
+        }
+        throw err
+      }
+    }
+  }
+
   try {
-    const result = await model.generateContent(fullPrompt)
+    const result = await callWithRetry(() => model.generateContent(fullPrompt))
     const text = result.response.text().trim()
 
     // Gemini sometimes wraps the JSON in markdown fences — strip them
@@ -140,6 +163,12 @@ Return ONLY the JSON object. No markdown fences around it, no extra text.`
       // Gemini returned something that wasn't valid JSON — not fatal
       console.error('Gemini returned non-JSON response — skipping.')
       console.error('Raw response was:', err.message)
+      process.exit(0)
+    }
+
+    // Network error (fetch failed, timeout) — log and exit cleanly
+    if (err.message?.includes('fetch failed') || err.message?.includes('ETIMEDOUT')) {
+      console.error('Gemini network error after retries — skipping review.')
       process.exit(0)
     }
 

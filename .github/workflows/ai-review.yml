@@ -73,6 +73,7 @@ jobs:
       # 6. Run the review script
       #    Passes the diff to Gemini, writes findings JSON to /tmp/review.json
       - name: Run AI review
+        timeout-minutes: 5
         run: node .bot-workflows/scripts/review.js < /tmp/pr.diff > /tmp/review.json
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
