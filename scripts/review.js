@@ -19,6 +19,7 @@ import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { config } from 'dotenv'
+import { getProjectContext, detectStack } from './get-context.js'
 
 // __dirname equivalent in ES modules
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -41,17 +42,10 @@ if (!API_KEY) {
 // This makes it easy to tune review quality without touching the script.
 const prompt = readFileSync(join(ROOT, 'prompts', 'review.md'), 'utf8')
 
-// --- 3. Load optional project context ---
+// --- 3. Load project context from the repo being reviewed ---
 
-// If PROJECT_CONTEXT.md exists in the current working directory (the repo being reviewed),
-// prepend it to the prompt so Gemini knows the project's specific rules.
-let projectContext = ''
-try {
-  projectContext = readFileSync(join(process.cwd(), 'PROJECT_CONTEXT.md'), 'utf8')
-  projectContext = `\n\n## Project-specific rules\n\n${projectContext}`
-} catch {
-  // No PROJECT_CONTEXT.md — that's fine, bot runs with defaults
-}
+// getProjectContext() reads PROJECT_CONTEXT.md and CLAUDE.md from cwd (the repo under review)
+const projectContext = getProjectContext(process.cwd())
 
 // --- 4. Read the diff from stdin ---
 
@@ -94,7 +88,13 @@ async function reviewDiff(diff) {
   // gemini-3.8-flash is the current free tier model
   const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' })
 
-  const fullPrompt = `${prompt}${projectContext}
+  // Detect stack from the diff so the prompt can focus on the right checks
+  const stack = detectStack(diff)
+  const stackNote = stack.length > 0
+    ? `\n\n## Detected stack\n\nThe following stack was detected from the changed files: ${stack.join(', ')}. Apply the matching checks from the prompt above.`
+    : ''
+
+  const fullPrompt = `${prompt}${projectContext}${stackNote}
 
 ## Diff to review
 
