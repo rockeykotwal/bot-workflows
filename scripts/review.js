@@ -18,7 +18,7 @@ import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { config } from 'dotenv'
-import { getProjectContext, detectStack } from './get-context.js'
+import { getProjectContext, detectStack, detectFormatterConfig } from './get-context.js'
 import { generate, PROVIDER } from './llm.js'
 
 // __dirname equivalent in ES modules
@@ -38,6 +38,9 @@ const prompt = readFileSync(join(ROOT, 'prompts', 'review.md'), 'utf8')
 
 // getProjectContext() reads PROJECT_CONTEXT.md and CLAUDE.md from cwd (the repo under review)
 const projectContext = getProjectContext(process.cwd())
+
+// detectFormatterConfig() reads biome.json / .prettierrc / .editorconfig
+const formatterConfig = detectFormatterConfig(process.cwd())
 
 // --- 3. Read the diff from stdin ---
 
@@ -95,7 +98,11 @@ async function reviewDiff(diff) {
     ? `\n\n## Detected stack\n\nThe following stack was detected from the changed files: ${stack.join(', ')}. Apply the matching checks from the prompt above.`
     : ''
 
-  const fullPrompt = `${prompt}${projectContext}${stackNote}
+  const formatterNote = formatterConfig
+    ? `\n\n## Formatter constraints\n\nThis project enforces: line width = ${formatterConfig.lineWidth} chars, indent = ${formatterConfig.indentWidth} ${formatterConfig.indentStyle}s. All code in the \`suggestion\` field MUST respect these constraints — break lines before the limit, never write a suggestion that would exceed ${formatterConfig.lineWidth} characters on any single line.`
+    : ''
+
+  const fullPrompt = `${prompt}${projectContext}${stackNote}${formatterNote}
 
 ## Diff to review
 

@@ -182,7 +182,7 @@ Return ONLY valid JSON. No markdown fences around it, no explanation outside the
       "title": "Short title, max 8 words",
       "problem": "What is wrong in one or two sentences.",
       "why": "The consequence if not fixed, or which project rule this breaks.",
-      "suggestion": "The corrected lines of code only — no surrounding unchanged context."
+      "suggestion": "The corrected lines of code only — no surrounding unchanged context. Format to match the project's line width (see Formatter constraints section if present, otherwise default to 80 chars). Break long lines into multiple lines rather than writing one long line."
     }
   ]
 }
