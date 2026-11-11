@@ -85,8 +85,9 @@ async function reviewDiff(diff) {
 
   const genAI = new GoogleGenerativeAI(API_KEY)
 
-  // Model list — primary first, fallback if primary is unavailable or overloaded
-  const MODELS = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash-002']
+  // Model list — primary first, fallback if primary is overloaded.
+  // gemini-flash-latest always points to the current stable Flash — good permanent alias.
+  const MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-flash-latest']
 
   function getModel(name) {
     return genAI.getGenerativeModel(
